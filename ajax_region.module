@@ -1,0 +1,182 @@
+<?php
+
+/**
+ * @file
+ * Ajax Region module.
+ */
+
+/**
+ * Register array of regions for loading
+ * @param $reg Array of registered regions - this will override the current one
+ * @return Currently registered regions
+ */
+function _regions_loader_register($reg = FALSE) {
+  static $register = FALSE;
+  if ($reg) {
+    $register = $reg;
+  }
+  return $register;
+}
+
+/**
+ * Implements hook_help().
+ */
+function ajax_region_help($path, $arg) {
+  if ($path == 'admin/config/system/ajax_region') {
+    $output = '<p>' . t('<b>Link:</b> CSS-selector of the link.') . '</p>';
+    $output .= '<p>' . t('<b>Ajax-regions:</b> Enter {regions:selectors} which would be loaded by ajax. Examples: <br /> {content: \'.region-content\'} <br /> {header: \'#header\', content: \'#content\', footer: \'#footer\'}') . '</p>';
+    return $output;
+  }
+}
+
+/**
+ * Add js and css for module.
+ */
+function ajax_region_init() {
+  if (isset($_POST['ajax_region'])) {
+    // Just regions.
+    $rl = $_POST['ajax_region'];
+    _regions_loader_register($rl);
+  }
+  else {
+    // Full page.
+    drupal_add_js(drupal_get_path('module', 'ajax_region') . '/js/ajax_region.js', array('weight' => 98));
+
+    $options = array();
+    $options['array'] = variable_get('ajax_region_array', array());
+    $options['site_name'] = variable_get('site_name');
+
+    drupal_add_js(array('ajax_region' => $options), 'setting');
+    $before = variable_get('ajax_region_before_loading');
+    if ($before != '') {
+      drupal_add_js($before, array('type' => 'inline', 'weight' => 99));
+    }
+
+    $after = variable_get('ajax_region_after_loading');
+    if ($after != '') {
+      drupal_add_js($after, array('type' => 'inline', 'weight' => 100));
+    }
+  }
+}
+
+/**
+ * Implementation of hook_page_alter()
+ */
+function ajax_region_page_alter($page) {
+  $rl = _regions_loader_register();
+  if ($rl) {
+    $result = array();
+    foreach ($rl as $key => $val) {
+      $region = array();
+      $region['id'] = 'region';
+      $region['region'] = $key;
+      $region['selector'] = $val;
+      $region['html'] = render($page[$key]);
+      $result[] = $region;
+    }
+
+    $settings = array();
+    $settings['id'] = 'settings';
+    if (arg(0) == 'node' && is_numeric(arg(1))) {
+      $settings['node_id'] = arg(1);
+    }
+    else {
+      $settings['node_id'] = 0;
+    }
+    $settings['node_title'] = drupal_get_title();
+    $result[] = $settings;
+
+    // Views settings for new ajax-content.
+    global $_ajax_region_AjaxViews;
+    if (isset($_ajax_region_AjaxViews)) {
+      $result[] = array(
+        'id' => 'views',
+        'views' => array(
+          'ajax_path' => url('views/ajax'),
+          'ajaxViews' => $_ajax_region_AjaxViews,
+        ),
+      );
+    }
+
+    print drupal_json_encode($result);
+    drupal_exit();
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function ajax_region_menu() {
+  $items = array();
+
+  // Sleeping page.
+  $items['ajax_region/sleep/%'] = array(
+    'title' => 'Sleeping page',
+    'page callback' => 'ajax_region_sleep',
+    'page arguments' => array(2),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  // Module settings menu.
+  $items['admin/config/system/ajax_region'] = array(
+    'title' => 'Ajax Region',
+    'description' => 'Ajax Region behaviour configuration',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('ajax_region_admin'),
+    'access arguments' => array('administer ajax_region'),
+    'file' => 'ajax_region.admin.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements of ajax_region_sleep().
+ *
+ * @sec
+ *   Loading time (seconds)
+ */
+function ajax_region_sleep($sec) {
+  if ($sec > 10) {
+    $sec = 10;
+  }
+  sleep($sec);
+  return $sec;
+}
+
+/**
+ * Integration with views preprocess.
+ */
+function ajax_region_preprocess_views_view(&$vars) {
+  global $_ajax_region_AjaxViews;
+  if (!isset($_ajax_region_AjaxViews)) {
+    $_ajax_region_AjaxViews = array();
+  }
+  
+  $view = $vars['view'];
+
+  // If using AJAX, send identifying data about this view.
+  if ($view->use_ajax && empty($view->is_attachment) && empty($view->live_preview)) {
+    $_ajax_region_AjaxViews['views_dom_id:' . $vars['dom_id']] = array(
+      'view_name' => $view->name,
+      'view_display_id' => $view->current_display,
+      'view_path' => check_plain($_GET['q']),
+      'view_base_path' => $view->get_path(),
+      'view_dom_id' => $vars['dom_id'],
+      'pager_element' => isset($view->query->pager) ? $view->query->pager->get_pager_id() : 0,
+    );
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function ajax_region_theme() {
+  return array(
+    'ajax_region_strings' => array(
+      'render element' => 'form',
+      'file' => 'ajax_region.admin.inc',
+    ),
+  );
+}
